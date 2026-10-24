@@ -2,19 +2,321 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>술객 점성술 회원 게시판</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>술객 점성술 회원 게시판</title>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  max-width: 850px;
+  margin: 30px auto;
+  padding: 16px;
+  line-height: 1.7;
+  background: #faf8f4;
+  color: #29251f;
+}
+h1 { color: #684b29; }
+section {
+  background: white;
+  padding: 20px;
+  border: 1px solid #e5ded3;
+  border-radius: 10px;
+  margin: 20px 0;
+}
+input, textarea {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  padding: 12px;
+  margin: 10px 0;
+  border: 1px solid #bbb;
+  border-radius: 5px;
+  font: inherit;
+}
+button {
+  padding: 10px 16px;
+  margin: 5px 5px 5px 0;
+  background: #684b29;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+button:disabled { opacity: .5; }
+article {
+  border-bottom: 1px solid #ddd;
+  padding: 15px 0;
+}
+.post-content { white-space: pre-wrap; }
+small { color: #666; }
+#status { white-space: pre-wrap; }
+[hidden] { display: none !important; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body>
-  <h1>술객 점성술</h1>
-  <h2>회원 게시판</h2>
 
-  <p>고전점성술을 연구하고 토론하는 공간입니다.</p>
+<h1>술객 점성술</h1>
+<p>고전점성술 연구와 토론을 위한 회원 게시판</p>
+<p><a href="/">홈페이지로 돌아가기</a></p>
 
-  <div id="board">
-    <h3>게시글 목록</h3>
-    <p>게시판을 준비하고 있습니다.</p>
-  </div>
+<section id="authSection">
+  <h2>회원가입 / 로그인</h2>
+  <input id="email" type="email"
+         placeholder="이메일 주소">
+  <input id="password" type="password"
+         placeholder="비밀번호 (6자 이상)">
+  <button id="signupBtn">회원가입</button>
+  <button id="loginBtn">로그인</button>
+</section>
+
+<section id="accountSection" hidden>
+  <p id="accountInfo"></p>
+  <button id="logoutBtn">로그아웃</button>
+</section>
+
+<section id="writeSection" hidden>
+  <h2 id="editorHeading">글쓰기</h2>
+  <form id="postForm">
+    <input id="postTitle" maxlength="200"
+           placeholder="글 제목" required>
+    <textarea id="postContent" rows="9"
+              placeholder="글 내용을 입력하세요"
+              required></textarea>
+    <button type="submit" id="saveBtn">글 등록</button>
+    <button type="button" id="cancelBtn" hidden>
+      수정 취소
+    </button>
+  </form>
+</section>
+
+<p id="status" role="status"></p>
+
+<section>
+  <h2>게시글 목록</h2>
+  <div id="postList">게시글을 불러오는 중입니다.</div>
+</section>
+
+<script>
+const SUPABASE_URL =
+  "https://uxjhdzmmlclwfpvmwgra.supabase.co";
+
+const SUPABASE_KEY =
+  "sb_publishable_n6C_ltecguzbyafrSm9MKg_0MZKXlYz";
+
+const db = window.supabase.createClient(
+  SUPABASE_URL, SUPABASE_KEY
+);
+
+let currentUser = null;
+let editingId = null;
+let loadedPosts = [];
+
+const el = id => document.getElementById(id);
+
+function message(text) {
+  el("status").textContent = text;
+}
+
+async function refreshAuth() {
+  const { data, error } = await db.auth.getUser();
+  currentUser = error ? null : data.user;
+
+  el("authSection").hidden = !!currentUser;
+  el("accountSection").hidden = !currentUser;
+  el("writeSection").hidden = !currentUser;
+
+  el("accountInfo").textContent = currentUser
+    ? "로그인: " + currentUser.email
+    : "";
+
+  if (!currentUser) resetEditor();
+  await loadPosts();
+}
+
+el("signupBtn").onclick = async () => {
+  const email = el("email").value.trim();
+  const password = el("password").value;
+
+  if (!email || password.length < 6) {
+    message("이메일과 6자 이상의 비밀번호를 입력하세요.");
+    return;
+  }
+
+  const { error } = await db.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo:
+        "https://sulgaek.github.io/board.html"
+    }
+  });
+
+  message(error
+    ? "회원가입 오류: " + error.message
+    : "회원가입 요청이 완료되었습니다. 인증 메일이 발송되었다면 이메일을 확인하세요.");
+  if (!error) await refreshAuth();
+};
+
+el("loginBtn").onclick = async () => {
+  const { error } = await db.auth.signInWithPassword({
+    email: el("email").value.trim(),
+    password: el("password").value
+  });
+
+  if (error) {
+    message("로그인 오류: " + error.message);
+    return;
+  }
+
+  message("로그인되었습니다.");
+  await refreshAuth();
+};
+
+el("logoutBtn").onclick = async () => {
+  const { error } = await db.auth.signOut();
+  if (error) return message(error.message);
+  message("로그아웃되었습니다.");
+  await refreshAuth();
+};
+
+function resetEditor() {
+  editingId = null;
+  el("postForm").reset();
+  el("editorHeading").textContent = "글쓰기";
+  el("saveBtn").textContent = "글 등록";
+  el("cancelBtn").hidden = true;
+}
+
+el("cancelBtn").onclick = resetEditor;
+
+el("postForm").onsubmit = async event => {
+  event.preventDefault();
+  if (!currentUser) return message("로그인이 필요합니다.");
+
+  const title = el("postTitle").value.trim();
+  const content = el("postContent").value.trim();
+  if (!title || !content) return message("제목과 본문을 입력하세요.");
+
+  el("saveBtn").disabled = true;
+
+  let result;
+  if (editingId !== null) {
+    result = await db.from("posts")
+      .update({ title, content })
+      .eq("id", editingId)
+      .eq("user_id", currentUser.id)
+      .select();
+  } else {
+    result = await db.from("posts")
+      .insert({
+        title,
+        content,
+        user_id: currentUser.id
+      })
+      .select();
+  }
+
+  el("saveBtn").disabled = false;
+
+  if (result.error) {
+    message("저장 오류: " + result.error.message);
+    return;
+  }
+
+  if (!result.data || result.data.length === 0) {
+    message("저장 권한을 확인하세요.");
+    return;
+  }
+
+  resetEditor();
+  message("게시글이 저장되었습니다.");
+  await loadPosts();
+};
+
+async function loadPosts() {
+  const { data, error } = await db.from("posts")
+    .select("id,title,content,user_id,created_at")
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  const list = el("postList");
+  list.replaceChildren();
+
+  if (error) {
+    list.textContent = "게시글 조회 오류: " + error.message;
+    return;
+  }
+
+  loadedPosts = data || [];
+
+  if (!loadedPosts.length) {
+    list.textContent = "아직 작성된 게시글이 없습니다.";
+    return;
+  }
+
+  for (const post of loadedPosts) {
+    const article = document.createElement("article");
+    const heading = document.createElement("h3");
+    heading.textContent = post.title;
+
+    const date = document.createElement("small");
+    date.textContent = new Date(
+      post.created_at
+    ).toLocaleString("ko-KR");
+
+    const content = document.createElement("p");
+    content.className = "post-content";
+    content.textContent = post.content;
+
+    article.append(heading, date, content);
+
+    if (currentUser &&
+        post.user_id === currentUser.id) {
+      const edit = document.createElement("button");
+      edit.textContent = "수정";
+      edit.onclick = () => {
+        editingId = post.id;
+        el("postTitle").value = post.title;
+        el("postContent").value = post.content;
+        el("editorHeading").textContent = "글 수정";
+        el("saveBtn").textContent = "수정 저장";
+        el("cancelBtn").hidden = false;
+        el("writeSection").scrollIntoView();
+      };
+
+      const remove = document.createElement("button");
+      remove.textContent = "삭제";
+      remove.onclick = async () => {
+        if (!confirm("이 글을 삭제하시겠습니까?")) return;
+
+        const { data, error } = await db.from("posts")
+          .delete()
+          .eq("id", post.id)
+          .eq("user_id", currentUser.id)
+          .select();
+
+        if (error || !data || !data.length) {
+          message("삭제하지 못했습니다. 권한을 확인하세요.");
+          return;
+        }
+
+        message("게시글이 삭제되었습니다.");
+        await loadPosts();
+      };
+
+      article.append(edit, remove);
+    }
+
+    list.append(article);
+  }
+}
+
+db.auth.onAuthStateChange(() => {
+  setTimeout(() => { refreshAuth(); }, 0);
+});
+
+refreshAuth();
+</script>
 </body>
 </html>
