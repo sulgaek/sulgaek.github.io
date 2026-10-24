@@ -1,0 +1,19 @@
+
+backend:
+  name: github
+  repo: sulgaek/sulgaek.github.io
+  branch: main
+
+media_folder: "images/uploads"
+public_folder: "/images/uploads"
+
+collections:
+  - name: "posts"
+    label: "점성술 게시글"
+    folder: "posts"
+    create: true
+    slug: "{{slug}}"
+    fields:
+      - {label: "제목", name: "title", widget: "string"}
+      - {label: "작성일", name: "date", widget: "datetime"}
+      - {label: "본문", name: "body", widget: "markdown"}
